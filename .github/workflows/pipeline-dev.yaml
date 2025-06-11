@@ -6,7 +6,6 @@ on:
       - development
 
 # 🖼️ \`${IMAGE_NAME}:${TAG}\`
-# Testing Notification on push to development branch
 
 jobs:
   notify:
