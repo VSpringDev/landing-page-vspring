@@ -1,5 +1,6 @@
 "use client"
 import Hero from "@/components/user/hero/page"
+import About from "@/components/user/about/page"
 
 export default function User() {
   
@@ -7,9 +8,7 @@ export default function User() {
        <>
          <div className="flex flex-col min-h-screen">
             <Hero />
-            <div className="h-[600px] ">
-               
-            </div>
+            <About />
          </div>
        </>
     )
