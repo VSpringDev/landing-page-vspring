@@ -2,7 +2,7 @@
 
 export default function About() {
   return (
-    <div className="h-screen flex items-center justify-center bg-gray-100 overflow-hidden relative">
+    <div className="h-screen flex items-center justify-center overflow-hidden relative">
       {/* <div className="absolute left-1/2 -translate-x-1/2  bottom-[-500px] flex items-center justify-center w-[1000px] h-[1000px] bg-gray-300 rounded-full">
         <div className="w-[700px] h-[700px] bg-gray-200 rounded-full shadow-lg flex items-center justify-center">
           <div className="w-[400px] h-[400px] bg-gray-100 rounded-full shadow-lg flex items-center justify-center"></div>
