@@ -52,7 +52,7 @@ jobs:
           COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
 
           MESSAGE=$(cat <<EOF
-          🚀 *Popel-Course CI/CD*
+          🚀 *VSPRING MENYALA*
 
           ✅ *Docker Image Successfully Pushed to GHCR*
 
