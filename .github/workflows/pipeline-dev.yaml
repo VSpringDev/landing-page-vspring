@@ -8,7 +8,7 @@ on:
 
 env:
   IMAGE_NAME: landing-page-vspring
-  GHCR_ORG: VSpringDev
+  GHCR_ORG: vspringdev
 
 jobs:
   build-and-push:
