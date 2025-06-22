@@ -23,7 +23,7 @@ export default function Navbar() {
         {/* logo */}
         <Link href="/user/hero">
           <div className="flex items-center gap-4">
-            <img className="w-10 h-10" src="/logo.png" alt="logo" />
+            <img className="w-10 h-10" src="/Logo.png" alt="logo" />
             <span className="text-white font-bold text-[1.4rem]">V-Spring Dev</span>
           </div>
         </Link>
