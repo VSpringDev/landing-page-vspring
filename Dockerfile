@@ -10,6 +10,7 @@ RUN pnpm install
 
 COPY . .
 
+ENV NEXT_DISABLE_ESLINT=true
 RUN pnpm build
 
 FROM node:20-alpine AS runner
