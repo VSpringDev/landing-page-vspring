@@ -76,6 +76,7 @@ export default function Login() {
       <div className="flex justify-center py-16 px-8 text-black bg-white">
         <div className="flex flex-col gap-4 w-full max-w-sm">
           {/* Logo */}
+          
           <div className="flex justify-center items-center gap-4">
             <img src="/Logo.png" alt="logo" className="w-12 h-12" />
             <h1 className="font-bold text-black text-[1.5rem] ">V-Spring Dev</h1>
