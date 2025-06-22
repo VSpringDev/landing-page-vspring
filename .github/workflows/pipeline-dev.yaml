@@ -7,8 +7,8 @@ on:
       - devops/base-setup
 
 env:
-  IMAGE_NAME: popel-backend
-  GHCR_ORG: popelcourseproject
+  IMAGE_NAME: landing-page-vspring
+  GHCR_ORG: VSpringDev
 
 jobs:
   build-and-push:
