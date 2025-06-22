@@ -56,7 +56,7 @@ jobs:
 
           ✅ *Docker Image Successfully Pushed to GHCR*
 
-          📦 *Image 1:* \`$IMAGE_NAME:$TAG\`
+          📦 *Image:* \`$IMAGE_NAME:$TAG\`
 
           📝 *Commit:* $COMMIT_MESSAGE
           
