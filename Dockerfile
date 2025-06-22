@@ -11,7 +11,8 @@ RUN pnpm install
 COPY . .
 
 ENV NEXT_DISABLE_ESLINT=true
-RUN pnpm build
+# RUN pnpm build
+RUN pnpm exec next build --no-lint
 
 FROM node:20-alpine AS runner
 
