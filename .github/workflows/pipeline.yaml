@@ -3,11 +3,11 @@ name: Build and Push Docker to GHCR
 on:
   push:
     branches:
-      - dev
+      - main
       # - devops/base-setup
 
 env:
-  IMAGE_NAME: landing-page-vspring-dev
+  IMAGE_NAME: landing-page-vspring
   GHCR_ORG: vspringdev
 
 jobs:
@@ -64,7 +64,7 @@ jobs:
           📝 *Commit:* $COMMIT_MESSAGE
 
           👤 *Author:* $COMMIT_AUTHOR
-
+          
           📅 *Date:* $(date +"%Y-%m-%d %H:%M:%S")
           EOF
           )
