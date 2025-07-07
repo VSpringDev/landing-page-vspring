@@ -3,13 +3,13 @@
 export default function About() {
   return (
     <div className="h-screen flex items-center justify-center">
-      <div className="w-[90%] h-[70%]  bg-black/30 rounded-br-[100px] rounded-tl-[100px] shadow-lg flex items-center justify-center gap-3 z-10 overflow-hidden relative">
+      {/* <div className="w-[90%] h-[70%]  bg-black/30 rounded-br-[100px] rounded-tl-[100px] shadow-lg flex items-center justify-center gap-3 z-10 overflow-hidden relative">
         <div className="absolute left-1/2 -translate-x-1/2  bottom-[-350px] flex items-center justify-center w-[700px] h-[700px] bg-gray-300 rounded-full">
           <div className="w-[600px] h-[600px] bg-gray-200 rounded-full shadow-lg flex items-center justify-center">
             <div className="w-[400px] h-[400px] bg-gray-100 rounded-full shadow-lg flex items-center justify-center"></div>
           </div>
         </div>
-      </div>
+      </div> */}
 
       <div className="w-[90%] h-[70%]  bg-black/30 rounded-br-[100px] rounded-tl-[100px] shadow-lg flex items-center justify-center gap-3 z-10">
         <div className="flex flex-col items-center justify-center gap-4">
