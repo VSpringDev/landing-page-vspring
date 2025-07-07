@@ -2,7 +2,7 @@
 
 function Card({ title, description }: { title: string, description: string }) {
   return <>
-    <div className="bg-gray-200 rounded-2xl">
+    <div className="bg-gray-200 rounded-2xl text-black">
       <div className="bg-gray-100 w-[50px] h-[50px] rounded-br-2xl relative">
         <div className="w-[24px] h-[24px] absolute top-[-8px] -right-[16px] bg-transparent rounded-tl-full border-t-[8px] border-l-[8px] border-gray-100"></div>
         <div className="w-[24px] h-[24px] absolute bottom-[-16px] -left-[8px] bg-transparent rounded-tl-full border-t-[8px] border-l-[8px] border-gray-100"></div>
