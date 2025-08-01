@@ -1,17 +1,92 @@
-name: Build and Push Docker to GHCR
+# name: Build and Push Docker to GHCR
+
+# on:
+#   push:
+#     branches:
+#       - main
+#       # - devops/base-setup
+
+# env:
+#   IMAGE_NAME: landing-page-vspring
+#   GHCR_ORG: vspringdev
+
+# jobs:
+#   build-and-push:
+#     runs-on: ubuntu-latest
+
+#     permissions:
+#       contents: read
+#       packages: write
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v3
+
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
+
+#       - name: Log in to GitHub Container Registry (GHCR)
+#         uses: docker/login-action@v3
+#         with:
+#           registry: ghcr.io
+#           username: ${{ github.actor }}
+#           password: ${{ secrets.GITHUB_TOKEN }}
+
+#       - name: Extract short SHA
+#         id: vars
+#         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+#       - name: Build and push Docker image to GHCR (org)
+#         run: |
+#           docker build -t ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }} .
+#           docker push ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}
+
+#       - name: Send Telegram Notification
+#         env:
+#           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+#           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+#           IMAGE_NAME: ${{ env.IMAGE_NAME }}
+#           TAG: ${{ steps.vars.outputs.sha_short }}
+#           BRANCH_NAME: ${{ github.ref_name }}
+#         run: |
+#           COMMIT_MESSAGE=$(git log -1 --pretty=format:"%s")
+#           COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
+
+#           MESSAGE=$(cat <<EOF
+#           🚀 *VSPRING MENYALA*
+
+#           ✅ *Docker Image Successfully Pushed to GHCR*
+
+#           📦 *Image:* \`$IMAGE_NAME:$TAG\`
+
+#           🌿 *Branch:* \`$BRANCH_NAME\`
+
+#           📝 *Commit:* $COMMIT_MESSAGE
+
+#           👤 *Author:* $COMMIT_AUTHOR
+          
+#           📅 *Date:* $(date +"%Y-%m-%d %H:%M:%S")
+#           EOF
+#           )
+
+#           curl -s -X POST https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage \
+#             -d chat_id="$TELEGRAM_CHAT_ID" \
+#             -d text="$MESSAGE" \
+#             -d parse_mode=Markdown
+
+name: Build, Push, and Deploy Docker to GHCR
 
 on:
   push:
     branches:
       - main
-      # - devops/base-setup
 
 env:
   IMAGE_NAME: landing-page-vspring
   GHCR_ORG: vspringdev
 
 jobs:
-  build-and-push:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     permissions:
@@ -19,12 +94,15 @@ jobs:
       packages: write
 
     steps:
+      # 1. Checkout source code
       - name: Checkout code
         uses: actions/checkout@v3
 
+      # 2. Setup Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # 3. Login to GHCR
       - name: Log in to GitHub Container Registry (GHCR)
         uses: docker/login-action@v3
         with:
@@ -32,15 +110,63 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 4. Ambil short commit SHA
       - name: Extract short SHA
         id: vars
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Build and push Docker image to GHCR (org)
+      # 5. Build & Push Docker Image
+      - name: Build and push Docker image to GHCR
         run: |
           docker build -t ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }} .
           docker push ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}
 
+      # 6. Deploy ke VM via SSH (Blue-Green)
+      - name: Deploy to VM with zero downtime
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22
+          script: |
+            IMAGE_NAME=ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}
+            OFFICIAL_NAME=${{ env.IMAGE_NAME }}
+            NEW_PORT=$(( (RANDOM % 1000) + 3000 )) # random port 3000-3999
+            NEW_CONTAINER="${OFFICIAL_NAME}_new"
+
+            echo "Pull latest image..."
+            sudo docker pull $IMAGE_NAME
+
+            echo "Run new container on port $NEW_PORT"
+            sudo docker run -d \
+              --name $NEW_CONTAINER \
+              -p $NEW_PORT:3000 \
+              --restart unless-stopped \
+              $IMAGE_NAME
+
+            echo "Waiting container to be healthy..."
+            for i in {1..10}; do
+              sleep 3
+              if curl -fs http://127.0.0.1:$NEW_PORT/health >/dev/null 2>&1; then
+                echo "Container healthy!"
+                break
+              fi
+            done
+
+            echo "Update Nginx upstream to new port..."
+            echo "upstream farid1_backend { server 127.0.0.1:$NEW_PORT; }" | sudo tee /etc/nginx/conf.d/farid1_upstream.conf
+            sudo nginx -s reload
+
+            echo "Stopping old container if exists..."
+            sudo docker rm -f $OFFICIAL_NAME || true
+
+            echo "Rename new container to official name..."
+            sudo docker rename $NEW_CONTAINER $OFFICIAL_NAME
+
+            echo "Deployment finished with zero downtime 🚀"
+
+      # 7. Kirim Notifikasi Telegram
       - name: Send Telegram Notification
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -53,18 +179,12 @@ jobs:
           COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
 
           MESSAGE=$(cat <<EOF
-          🚀 *VSPRING MENYALA*
-
-          ✅ *Docker Image Successfully Pushed to GHCR*
-
-          📦 *Image:* \`$IMAGE_NAME:$TAG\`
-
-          🌿 *Branch:* \`$BRANCH_NAME\`
-
-          📝 *Commit:* $COMMIT_MESSAGE
-
-          👤 *Author:* $COMMIT_AUTHOR
-          
+          🚀 *VSPRING MENYALA*  
+          ✅ *Docker Image Successfully Pushed & Deployed*  
+          📦 *Image:* \`$IMAGE_NAME:$TAG\`  
+          🌿 *Branch:* \`$BRANCH_NAME\`  
+          📝 *Commit:* $COMMIT_MESSAGE  
+          👤 *Author:* $COMMIT_AUTHOR  
           📅 *Date:* $(date +"%Y-%m-%d %H:%M:%S")
           EOF
           )
