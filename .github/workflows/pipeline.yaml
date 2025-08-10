@@ -90,11 +90,15 @@ jobs:
 
           ✅ *Docker Image Successfully Pushed to GHCR*
 
+          ===================================
+
           📦 *Image:* \`$IMAGE_NAME:$TAG\`
           🌿 *Branch:* \`$BRANCH_NAME\`
           📝 *Commit:* $COMMIT_MESSAGE
           👤 *Author:* $COMMIT_AUTHOR
           📅 *Date:* $(date +"%Y-%m-%d %H:%M:%S")
+
+          ===================================
           EOF
           )
           curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
