@@ -49,7 +49,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to VM (Blue/Green fixed ports)
+      - name: Deploy to VM (Blue/Green single file)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VM_HOST }}
@@ -58,65 +58,75 @@ jobs:
           port: 22
           script_stop: true
           script: |
-              set -euo pipefail
+            set -euo pipefail
 
-              CONF="/etc/nginx/sites-available/farid1.conf"
-              NAME="landing-page-vspring"
-              IMAGE="ghcr.io/vspringdev/landing-page-vspring:${TAG}"   # isi TAG dari CI
-              BLUE=3000
-              GREEN=3001
+            CONF="/etc/nginx/sites-available/farid1.conf"
+            NAME="landing-page-vspring"
+            IMAGE="ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}"
+            BLUE=3000
+            GREEN=3001
 
-              # Pull & start container baru di port lawan
-              ACTIVE_PORT=$(awk '
-                $1=="upstream" && $2=="farid1" { in_up=1 }
-                in_up && $1=="server" { 
-                  m=match($0, /127\.0\.0\.1:([0-9]+)/, a); 
-                  if(m) { print a[1]; exit } 
-                }
-              ' "$CONF" || true)
+            # Tentukan port aktif dari block upstream farid1
+            ACTIVE_PORT=$(awk '
+              $1=="upstream" && $2=="farid1" { in_up=1 }
+              in_up && $1=="server" {
+                m=match($0, /127\.0\.0\.1:([0-9]+)/, a);
+                if(m) { print a[1]; exit }
+              }
+            ' "$CONF" || true)
 
-              if [ "$ACTIVE_PORT" = "$BLUE" ]; then
-                NEW=$GREEN
-                NEW_NAME="${NAME}_green"
-              else
-                NEW=$BLUE
-                NEW_NAME="${NAME}_blue"
-              fi
+            if [ "$ACTIVE_PORT" = "$BLUE" ]; then
+              NEW=$GREEN
+              NEW_NAME="${NAME}_green"
+            else
+              NEW=$BLUE
+              NEW_NAME="${NAME}_blue"
+            fi
 
-              sudo docker pull "$IMAGE"
-              sudo docker rm -f "$NEW_NAME" >/dev/null 2>&1 || true
-              sudo docker run -d --name "$NEW_NAME" -p "$NEW:3000" --restart unless-stopped "$IMAGE"
+            # Login GHCR jika private (set secrets GHCR_USER & GHCR_PAT bila perlu)
+            if [ -n "${GHCR_USER:-}" ] && [ -n "${GHCR_PAT:-}" ]; then
+              echo "$GHCR_PAT" | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            fi
 
-              # Health check: /health -> fallback /
-              HEALTH="http://127.0.0.1:$NEW/health"
-              if ! curl -fsI "$HEALTH" >/dev/null 2>&1; then HEALTH="http://127.0.0.1:$NEW/"; fi
-              for i in {1..20}; do
-                if curl -fs "$HEALTH" >/dev/null 2>&1; then echo "Healthy ($HEALTH)"; break; fi
-                sleep 3
-                if [ $i -eq 20 ]; then echo "Health check failed"; sudo docker logs "$NEW_NAME" || true; exit 1; fi
-              done
+            # Pastikan curl ada
+            command -v curl >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y curl; }
 
-              # Update upstream port hanya di dalam block upstream farid1
-              sudo awk -v p="$NEW" '
-                $1=="upstream" && $2=="farid1" { in_up=1 }
-                in_up && $1=="server" {
-                  gsub(/127\.0\.0\.1:[0-9]+/, "127.0.0.1:" p)
-                }
-                /}/ && in_up { in_up=0 }
-                { print }
-              ' "$CONF" | sudo tee "$CONF.tmp" >/dev/null
+            echo "[1/7] Pull $IMAGE"
+            sudo docker pull "$IMAGE"
 
-              sudo mv "$CONF.tmp" "$CONF"
-              sudo nginx -t
-              sudo nginx -s reload
+            echo "[2/7] Run new container on :$NEW"
+            sudo docker rm -f "$NEW_NAME" >/dev/null 2>&1 || true
+            sudo docker run -d --name "$NEW_NAME" -p "$NEW:3000" --restart unless-stopped "$IMAGE"
 
-              # Switch nama container (optional)
-              sudo docker rm -f "$NAME" >/dev/null 2>&1 || true
-              sudo docker rename "$NEW_NAME" "$NAME"
+            echo "[3/7] Health check"
+            HEALTH="http://127.0.0.1:$NEW/health"
+            if ! curl -fsI "$HEALTH" >/dev/null 2>&1; then HEALTH="http://127.0.0.1:$NEW/"; fi
+            for i in {1..20}; do
+              if curl -fs "$HEALTH" >/dev/null 2>&1; then echo "Healthy ($HEALTH)"; break; fi
+              sleep 3
+              if [ $i -eq 20 ]; then echo "Health check failed"; sudo docker logs "$NEW_NAME" || true; exit 1; fi
+            done
 
-              # Optional: bersihkan image/container/network sisa
-              sudo docker image prune -a -f || true
+            echo "[4/7] Update upstream port di $CONF"
+            sudo awk -v p="$NEW" '
+              $1=="upstream" && $2=="farid1" { in_up=1 }
+              in_up && $1=="server" { gsub(/127\.0\.0\.1:[0-9]+/, "127.0.0.1:" p) }
+              /}/ && in_up { in_up=0 }
+              { print }
+            ' "$CONF" | sudo tee "$CONF.tmp" >/dev/null
+            sudo mv "$CONF.tmp" "$CONF"
 
+            echo "[5/7] nginx -t"
+            sudo nginx -t
+
+            echo "[6/7] nginx reload"
+            sudo nginx -s reload
+
+            echo "[7/7] Switch nama container"
+            sudo docker rm -f "$NAME" >/dev/null 2>&1 || true
+            sudo docker rename "$NEW_NAME" "$NAME"
+
+            sudo docker image prune -a -f || true
 
       - name: Send Telegram Notification
         env:
