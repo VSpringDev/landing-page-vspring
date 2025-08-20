@@ -1,5 +1,5 @@
 name: Build, Push, and Deploy Docker to GHCR
-
+# test
 on:
   push:
     branches: [ main ]
@@ -130,7 +130,7 @@ jobs:
           MESSAGE=$(cat <<EOF
           🚀 *VSPRING MENYALA*
 
-          ✅ *Docker Image Successfully Deployed with Zero Downtime*
+          ✅ *Docker Image Successfully Deployed*
 
           =============================
 
