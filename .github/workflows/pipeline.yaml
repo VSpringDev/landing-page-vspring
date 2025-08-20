@@ -64,7 +64,6 @@ jobs:
             APP_NAME="${{ env.IMAGE_NAME }}"
             ACTIVE_FILE="/etc/nginx/snippets/app-active-port.inc"
             HEALTH_TIMEOUT=60
-            CURL_OPTS="--fail --silent --show-error --max-time 2"
 
             echo "[1/7] Pull image: $IMAGE_FULL"
             sudo docker pull "$IMAGE_FULL"
