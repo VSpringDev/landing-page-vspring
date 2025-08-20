@@ -49,7 +49,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to VM (simple)
+      - name: Deploy to VM (zero-downtime flip)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VM_HOST }}
@@ -60,20 +60,57 @@ jobs:
           script: |
             set -euo pipefail
 
-            IMAGE_NAME="ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}"
+            IMAGE_FULL="ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}"
+            APP_NAME="${{ env.IMAGE_NAME }}"
+            ACTIVE_FILE="/etc/nginx/snippets/app-active-port.inc"
+            HEALTH_TIMEOUT=60
+            CURL_OPTS="--fail --silent --show-error --max-time 2"
 
-            echo "Pulling image: $IMAGE_NAME"
-            sudo docker pull $IMAGE_NAME
+            echo "[1/7] Pull image: $IMAGE_FULL"
+            sudo docker pull "$IMAGE_FULL"
 
-            echo "Stopping and removing existing container (if any)"
-            sudo docker rm -f ${{ env.IMAGE_NAME }} || true
+            echo "[2/7] Detect current active port"
+            CURRENT_PORT="$(grep -Eo '[0-9]+' "$ACTIVE_FILE" 2>/dev/null || echo 3000)"
+            if [ "$CURRENT_PORT" = "3000" ]; then NEW_PORT=3001; else NEW_PORT=3000; fi
+            echo "Current active: $CURRENT_PORT -> New target: $NEW_PORT"
 
-            echo "Running new container"
+            NEW_CNAME="${APP_NAME}-${NEW_PORT}"
+            OLD_CNAME="${APP_NAME}-${CURRENT_PORT}"
+
+            echo "[3/7] Run new container on localhost:$NEW_PORT"
+            sudo docker rm -f "$NEW_CNAME" >/dev/null 2>&1 || true
             sudo docker run -d \
-              --name ${{ env.IMAGE_NAME }} \
-              -p 3000:3000 \
+              --name "$NEW_CNAME" \
+              -p "127.0.0.1:${NEW_PORT}:3000" \
               --restart unless-stopped \
-              $IMAGE_NAME
+              "$IMAGE_FULL"
+
+            echo "[4/7] Wait until new container ready"
+            SECS=0
+            until curl $CURL_OPTS "http://127.0.0.1:${NEW_PORT}" >/dev/null 2>&1; do
+              SECS=$((SECS+2))
+              if [ "$SECS" -ge "$HEALTH_TIMEOUT" ]; then
+                echo "❌ New container not ready in ${HEALTH_TIMEOUT}s"
+                sudo docker logs --tail 50 "$NEW_CNAME" || true
+                exit 1
+              fi
+              sleep 2
+            done
+            echo "✅ New container responsive at port $NEW_PORT"
+
+            echo "[5/7] Switch Nginx upstream to $NEW_PORT"
+            echo "set \$app_port ${NEW_PORT};" | sudo tee "$ACTIVE_FILE" >/dev/null
+            sudo nginx -t
+            sudo nginx -s reload
+
+            echo "[6/7] Drain old container (grace 5s) then remove"
+            sleep 5
+            sudo docker rm -f "$OLD_CNAME" >/dev/null 2>&1 || true
+
+            echo "[7/7] Cleanup old images (optional)"
+            sudo docker image prune -f >/dev/null 2>&1 || true
+
+            echo "✅ Deploy done with zero downtime"
 
       - name: Send Telegram Notification
         env:
@@ -88,7 +125,7 @@ jobs:
           MESSAGE=$(cat <<EOF
           🚀 *VSPRING MENYALA*
 
-          ✅ *Docker Image Successfully Pushed to GHCR*
+          ✅ *Docker Image Successfully Deployed with Zero Downtime*
 
           =============================
 
@@ -105,3 +142,111 @@ jobs:
             -d chat_id="$TELEGRAM_CHAT_ID" \
             -d text="$MESSAGE" \
             -d parse_mode=Markdown
+
+# name: Build, Push, and Deploy Docker to GHCR
+
+# on:
+#   push:
+#     branches: [ main ]
+
+# env:
+#   IMAGE_NAME: landing-page-vspring
+#   GHCR_ORG: vspringdev
+#   REGISTRY: ghcr.io
+
+# concurrency:
+#   group: deploy-${{ github.ref }}
+#   cancel-in-progress: true
+
+# jobs:
+#   build-and-deploy:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: read
+#       packages: write
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
+
+#       - name: Log in to GHCR
+#         uses: docker/login-action@v3
+#         with:
+#           registry: ${{ env.REGISTRY }}
+#           username: ${{ github.actor }}
+#           password: ${{ secrets.GITHUB_TOKEN }}
+
+#       - name: Extract short SHA
+#         id: vars
+#         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+#       - name: Build & Push (cached)
+#         uses: docker/build-push-action@v6
+#         with:
+#           context: .
+#           push: true
+#           tags: |
+#             ${{ env.REGISTRY }}/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}
+#             ${{ env.REGISTRY }}/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:latest
+#           cache-from: type=gha
+#           cache-to: type=gha,mode=max
+
+#       - name: Deploy to VM (simple)
+#         uses: appleboy/ssh-action@v1.0.3
+#         with:
+#           host: ${{ secrets.VM_HOST }}
+#           username: ${{ secrets.VM_USER }}
+#           key: ${{ secrets.VM_SSH_KEY }}
+#           port: 22
+#           script_stop: true
+#           script: |
+#             set -euo pipefail
+
+#             IMAGE_NAME="ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}"
+
+#             echo "Pulling image: $IMAGE_NAME"
+#             sudo docker pull $IMAGE_NAME
+
+#             echo "Stopping and removing existing container (if any)"
+#             sudo docker rm -f ${{ env.IMAGE_NAME }} || true
+
+#             echo "Running new container"
+#             sudo docker run -d \
+#               --name ${{ env.IMAGE_NAME }} \
+#               -p 3000:3000 \
+#               --restart unless-stopped \
+#               $IMAGE_NAME
+
+#       - name: Send Telegram Notification
+#         env:
+#           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+#           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+#           IMAGE_NAME: ${{ env.IMAGE_NAME }}
+#           TAG: ${{ steps.vars.outputs.sha_short }}
+#           BRANCH_NAME: ${{ github.ref_name }}
+#         run: |
+#           COMMIT_MESSAGE=$(git log -1 --pretty=format:"%s")
+#           COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
+#           MESSAGE=$(cat <<EOF
+#           🚀 *VSPRING MENYALA*
+
+#           ✅ *Docker Image Successfully Pushed to GHCR*
+
+#           =============================
+
+#           📦 *Image:* \`$IMAGE_NAME:$TAG\`
+#           🌿 *Branch:* \`$BRANCH_NAME\`
+#           📝 *Commit:* $COMMIT_MESSAGE
+#           👤 *Author:* $COMMIT_AUTHOR
+#           📅 *Date:* $(date +"%Y-%m-%d %H:%M:%S")
+
+#           =============================
+#           EOF
+#           )
+#           curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+#             -d chat_id="$TELEGRAM_CHAT_ID" \
+#             -d text="$MESSAGE" \
+#             -d parse_mode=Markdown
