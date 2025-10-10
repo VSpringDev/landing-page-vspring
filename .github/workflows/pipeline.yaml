@@ -1,14 +1,17 @@
-name: Build and Push Docker to GHCR
+name: Build, Push, and Deploy Docker to GHCR
 
 on:
   push:
-    branches:
-      - main
-      # - devops/base-setup
+    branches: [ main ]
 
 env:
   IMAGE_NAME: landing-page-vspring
   GHCR_ORG: vspringdev
+  REGISTRY: ghcr.io
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   security:
@@ -33,22 +36,21 @@ jobs:
   build-and-push:
     name: Build and Deploy
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry (GHCR)
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -56,10 +58,83 @@ jobs:
         id: vars
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Build and push Docker image to GHCR (org)
-        run: |
-          docker build -t ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }} .
-          docker push ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}
+      - name: Build & Push (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}
+            ${{ env.REGISTRY }}/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy to VM (zero-downtime flip)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            IMAGE_FULL="ghcr.io/${{ env.GHCR_ORG }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_short }}"
+            APP_NAME="${{ env.IMAGE_NAME }}"
+            ACTIVE_FILE="/etc/nginx/snippets/app-active-port.inc"
+            HEALTH_TIMEOUT=60
+
+            echo "[1/7] Pull image: $IMAGE_FULL"
+            sudo docker pull "$IMAGE_FULL"
+
+            echo "[2/7] Detect current active port"
+            CURRENT_PORT="$(grep -Eo '[0-9]+' "$ACTIVE_FILE" 2>/dev/null || echo 3000)"
+            if [ "$CURRENT_PORT" = "3000" ]; then NEW_PORT=3001; else NEW_PORT=3000; fi
+            echo "Current active: $CURRENT_PORT -> New target: $NEW_PORT"
+
+            NEW_CNAME="${APP_NAME}-${NEW_PORT}"
+            OLD_CNAME="${APP_NAME}-${CURRENT_PORT}"
+
+            echo "[3/7] Run new container on localhost:$NEW_PORT"
+            sudo docker rm -f "$NEW_CNAME" >/dev/null 2>&1 || true
+            sudo docker run -d \
+              --name "$NEW_CNAME" \
+              -p "127.0.0.1:${NEW_PORT}:3000" \
+              --restart unless-stopped \
+              "$IMAGE_FULL"
+
+            # [4/7] Readiness check (TCP only, no HTTP)
+            SECS=0
+            MAX=$HEALTH_TIMEOUT
+
+            # [4/7] Readiness check via nc
+            SECS=0
+            MAX=$HEALTH_TIMEOUT
+            while ! nc -z -w 2 127.0.0.1 "${NEW_PORT}"; do
+              SECS=$((SECS+2))
+              if [ "$SECS" -ge "$MAX" ]; then
+                echo "❌ New container port ${NEW_PORT} not accepting connections within ${MAX}s"
+                sudo docker logs --tail 200 "$NEW_CNAME" || true
+                exit 1
+              fi
+              sleep 2
+            done
+            echo "✅ TCP ready on ${NEW_PORT}"
+
+            # [5/7] Flip Nginx
+            echo "set \$app_port ${NEW_PORT};" | sudo tee "$ACTIVE_FILE" >/dev/null
+            sudo nginx -t
+            sudo nginx -s reload
+
+            # [6/7] Drain & remove old
+            sleep 5
+            sudo docker rm -f "$OLD_CNAME" >/dev/null 2>&1 || true
+
+            echo "[7/7] Cleanup old images (optional)"
+            sudo docker image prune -f >/dev/null 2>&1 || true
+
+            echo "✅ Deploy done with zero downtime"
 
       - name: Send Telegram Notification
         env:
@@ -71,25 +146,23 @@ jobs:
         run: |
           COMMIT_MESSAGE=$(git log -1 --pretty=format:"%s")
           COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
-
           MESSAGE=$(cat <<EOF
           🚀 *VSPRING MENYALA*
 
-          ✅ *Docker Image Successfully Pushed to GHCR*
+          ✅ *Docker Image Successfully Deployed*
+
+          =============================
 
           📦 *Image:* \`$IMAGE_NAME:$TAG\`
-
           🌿 *Branch:* \`$BRANCH_NAME\`
-
           📝 *Commit:* $COMMIT_MESSAGE
-
           👤 *Author:* $COMMIT_AUTHOR
-          
           📅 *Date:* $(date +"%Y-%m-%d %H:%M:%S")
+
+          =============================
           EOF
           )
-
-          curl -s -X POST https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage \
+          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
             -d chat_id="$TELEGRAM_CHAT_ID" \
             -d text="$MESSAGE" \
             -d parse_mode=Markdown
